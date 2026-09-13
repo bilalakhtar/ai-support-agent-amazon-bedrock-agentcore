@@ -19,6 +19,7 @@ Invoke deployed agent:
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 # These imports are provided. Do not remove them.
+
 from pydantic import BaseModel, Field
 from strands import Agent, tool
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -38,7 +39,7 @@ from bedrock_agentcore.tools.code_interpreter_client import code_session
 from strands_tools.browser import AgentCoreBrowser
 
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CSAI_Agent")
 
 # ── COMPLETED 1 — App Initialisation ───────────────────────────────────────────────
@@ -349,9 +350,18 @@ def search_knowledge_base(query: str) -> str:
     Returns:
         Relevant information retrieved from the knowledge base
     """
-    
-    if not KB_ID or KB_ID.startswith("<"):
-        return "Knowledge base not configured."
+
+    if not KB_ID or not KB_ID.strip():
+        return (
+            "Knowledge Base is not configured: KB_ID is empty or missing. "
+            "Please configure KB_ID before attempting a knowledge-base search."
+        )
+
+    if KB_ID.strip().startswith("<"):
+        return (
+            "Knowledge Base is not configured: KB_ID still contains a placeholder value. "
+            "Please configure a valid KB_ID before attempting a knowledge-base search."
+        )
 
     try:
         response = _bedrock_runtime.retrieve(
@@ -688,30 +698,105 @@ Respond clearly and concisely.
 """
 
         # 5. Connect to AgentCore Gateway through MCP
-        mcp_client = MCPClient(
+        gateway_client = MCPClient(
             lambda: streamable_http_client(GATEWAY_URL)
         )
+        try:
+            with gateway_client:
+                try:
+                    gateway_tools = gateway_client.list_tools_sync()
 
-        with mcp_client:
-            gateway_tools = mcp_client.list_tools_sync()
-            tools.extend(gateway_tools)
+                    if not gateway_tools:
+                        logger.warning(
+                            "Gateway connected but returned no tools."
+                        )
+                        return (
+                            "I'm sorry, the customer-support tools are currently "
+                            "unavailable. Please try again later."
+                        )
 
-            # 6. Create and invoke the Strands agent
-            agent = Agent(
-                model=model,
-                tools=tools,
-                hooks=[memory_hook],
-                system_prompt=system_prompt,
+                    tools.extend(gateway_tools)
+
+                    logger.info(
+                        "Gateway connected successfully. Loaded %d tools.",
+                        len(gateway_tools),
+                    )
+
+                except TimeoutError:
+                    logger.exception("Gateway tool loading timed out")
+                    return (
+                        "I'm sorry, the customer-support service timed out. "
+                        "Please try again later."
+                    )
+
+                except ConnectionError:
+                    logger.exception("Gateway connection failed")
+                    return (
+                        "I'm sorry, I couldn't connect to the customer-support "
+                        "service. Please try again later."
+                    )
+
+                except Exception as exc:
+                    logger.exception(
+                        "Gateway tool loading failed: %s",
+                        exc,
+                    )
+                    return (
+                        "I'm sorry, the customer-support tools are currently "
+                        "unavailable. Please try again later."
+                    )
+
+                # 6. Create and invoke the agent while MCP connection is open
+                try:
+                    agent = Agent(
+                        model=model,
+                        tools=tools,
+                        hooks=[memory_hook],
+                        system_prompt=system_prompt,
+                    )
+
+                    response = await agent.invoke_async(user_input)
+
+                    return response.message["content"][0]["text"]
+
+                except Exception:
+                    logger.exception("Agent invocation failed")
+                    return (
+                        "Sorry, I encountered an unexpected error while "
+                        "processing your request. Please try again later."
+                    )
+
+        except TimeoutError:
+            logger.exception("Gateway connection timed out")
+            return (
+                "I'm sorry, the customer-support service timed out. "
+                "Please try again later."
             )
 
-            response = await agent.invoke_async(user_input)
+        except ConnectionError:
+            logger.exception("Gateway connection failed")
+            return (
+                "I'm sorry, I couldn't connect to the customer-support "
+                "service. Please try again later."
+            )
 
-            # 7. Return the first text content block
-            return response.message["content"][0]["text"]
+        except Exception as exc:
+            logger.exception(
+                "Gateway connection failed: %s",
+                exc,
+            )
+            return (
+                "I'm sorry, the customer-support tools are currently "
+                "unavailable. Please try again later."
+            )
 
-    except Exception as e:
-        logger.exception("Agent invocation failed")
-        return f"Sorry, I encountered an error while processing your request: {str(e)}"
+
+    except Exception:
+        logger.exception("Unexpected request processing failure")
+        return (
+            "Sorry, I encountered an unexpected error while processing "
+            "your request. Please try again later."
+        )
 
 
 # ── CLI entry point (do not modify) ──────────────────────────────────────────

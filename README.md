@@ -421,46 +421,8 @@ Pydantic validated the loyalty result correctly, but the language model could st
 
 ## Reflection
 
-This project gave me practical experience building and deploying a complete customer support AI agent using Amazon Bedrock AgentCore and Strands Agents. I integrated multiple AgentCore services, including Gateway, Memory, Browser, Code Interpreter, and a Bedrock Knowledge Base, instead of relying only on a language model response.
+This project gave me practical experience building a customer support AI agent with Amazon Bedrock AgentCore and Strands Agents. One important implementation decision was to use AgentCore Gateway with MCPClient for order-tracking and refund tools. I chose this approach because it allowed the agent to access multiple backend services through a consistent tool interface instead of hard-coding direct service calls inside the agent. I also used AgentCore Code Interpreter for loyalty calculations and added Pydantic validation so the structured calculation result could be checked before it was returned to the language model.
 
-One of the most useful lessons was understanding how an agent can coordinate multiple tools to complete a customer request safely. For example, a full refund should not be created from an assumed amount. The workflow first retrieves the order through the Gateway and then passes the verified total to the refund processor. This made the response more reliable and reduced the risk of invented transaction details.
+A concrete challenge I encountered was that some features worked locally but failed after deployment because the AgentCore Runtime used a different IAM execution role. For example, Knowledge Base retrieval and Browser access initially returned authorization errors. I resolved this by reviewing the runtime role, adding the required permissions, redeploying, and then retesting each integration separately. I also improved Gateway error handling so connection failures, timeouts, or empty tool lists are logged with meaningful messages instead of causing silent failures.
 
-I also implemented long-term memory with semantic and user-preference strategies. Testing the same customer across different session IDs showed that delivery and packaging preferences could be stored and recalled later. This demonstrated how persistent memory can make support interactions more personalized.
-
-The most challenging part was AWS permissions. Some services worked locally but initially failed after deployment because the AgentCore Runtime execution role required its own permissions for Knowledge Base retrieval and Browser sessions. Troubleshooting this helped me better understand IAM boundaries between local credentials and deployed workloads.
-
-As an additional enhancement, I added Pydantic validation to Code Interpreter results. This showed that structured validation can catch malformed output before it reaches the user. I also learned that validating tool data is only part of the solution—the model must still be instructed to preserve validated values when producing natural-language responses.
-
-Overall, the project strengthened my understanding of agentic workflows, RAG, tool orchestration, persistent memory, structured validation, secure computation, IAM, and production deployment on AWS.
-
-## Future Improvements
-
-- Add token-budget-aware conversation summarization for long sessions
-- Add Pydantic validation for Gateway order and refund responses
-- Add automated integration tests for every deployed tool
-- Add request-level metrics and dashboards when observability permissions are available
-- Add retry/backoff handling for temporary AWS service failures
-- Add CI/CD deployment and automated policy checks
-
-## Cleanup
-
-When the project is complete, remove resources that are no longer required to avoid unnecessary AWS usage or cost.
-
-For the AgentCore Runtime:
-
-```bash
-uv run agentcore destroy
-```
-
-Also review and remove unused:
-
-- Lambda functions
-- API Gateway resources
-- AgentCore Gateway/targets
-- AgentCore Memory
-- Knowledge Base and data source
-- OpenSearch Serverless collection
-- S3 deployment/catalog buckets
-- IAM roles and inline policies
-
-Only perform cleanup after all required screenshots, evidence, and submission files have been saved.
+For production use, security, monitoring, and cost control would be important. I would apply least-privilege IAM policies so the runtime can access only the specific Knowledge Base, Gateway, Browser, and other resources it needs. I would also use CloudWatch logs and alerts to monitor tool failures, latency, and repeated authorization errors. Cost should also be monitored, especially for services such as OpenSearch Serverless, because persistent infrastructure can continue generating charges even when the agent is not actively used. In production, I would add budgets, resource cleanup procedures, and automated monitoring to control unnecessary spending while keeping the system reliable.
